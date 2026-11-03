@@ -1,5 +1,15 @@
 import Foundation
 
+// MARK: - Models, matched exactly to the live api.php (Movi v2).
+//
+// Every shape below was verified against /var/www/movi/api.php on
+// 2026-11-03. The previous app decoded a spec that the live server never
+// implemented (hero/rows, poster_url, playback objects, a favorites
+// endpoint, download endpoints) — that mismatch is why so much of the old
+// app silently failed. Nothing here decodes a field the server does not
+// send, and every field that can be absent is optional with a safe default,
+// so one odd row can never blank a whole screen.
+
 // MARK: - Auth
 
 struct APIUser: Codable {
@@ -14,13 +24,13 @@ struct APIUser: Codable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        id = try c.decode(Int.self, forKey: .id)
-        username = try c.decode(String.self, forKey: .username)
-        email = try c.decode(String.self, forKey: .email)
-        if let b = try? c.decode(Bool.self, forKey: .is_admin) {
+        id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        username = try c.decodeIfPresent(String.self, forKey: .username) ?? ""
+        email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
+        if let b = try? c.decodeIfPresent(Bool.self, forKey: .is_admin), let b {
             isAdmin = b
         } else {
-            isAdmin = ((try? c.decode(Int.self, forKey: .is_admin)) ?? 0) == 1
+            isAdmin = (try? c.decodeIfPresent(Int.self, forKey: .is_admin)) ?? 0 == 1
         }
     }
 }
@@ -34,221 +44,168 @@ struct LoginResponse: Codable {
 struct Profile: Codable, Identifiable, Hashable {
     let id: Int
     let name: String
-    let color: String
+    let color: String?
 }
 
 struct ProfilesResponse: Codable {
-    let profiles: [Profile]
-    let current_profile_id: Int?
-    let csrf: String?
+    let profiles: [Profile]?
 }
 
-// MARK: - Home
+// MARK: - Shared title row
+//
+// api.php's movie_row(): id, title, year, overview, poster, backdrop,
+// genres, runtime, duration, stream_url. Continue-watching rows add
+// position and progress. Show rows in home/search carry only
+// id, title, year, overview, poster, backdrop.
 
-/// One card in a home row. Movies/shows use `id`; continue-watching uses
-/// `item_id` + `kind`. Decodes either shape.
-struct HomeItem: Codable, Identifiable, Hashable {
-    let itemId: Int
+struct TitleItem: Codable, Identifiable, Hashable {
+    let id: Int
     let title: String
     let year: Int?
-    let posterUrl: String?
-    let kind: String
-    let positionSeconds: Double?
-    let durationSeconds: Double?
-    let showTitle: String?
-    let seasonNo: Int?
-    let episodeNo: Int?
+    let overview: String?
+    let poster: String?
+    let backdrop: String?
+    let genres: String?
+    let runtimeMinutes: Int?
+    let durationSeconds: Int?
+    let streamUrl: String?
+    let positionSeconds: Int?
+    let progress: Double?
 
-    var id: Int { itemId }
-
-    var progress: Double? {
-        guard let p = positionSeconds, let d = durationSeconds, d > 0 else { return nil }
-        return min(1, max(0, p / d))
-    }
-
-    /// Where tapping this card should go.
-    var destination: Destination? {
-        switch kind {
-        case "movie": return .movie(itemId)
-        case "show": return .show(itemId)
-        case "episode": return .episode(itemId)
-        default: return nil
-        }
+    var progressFraction: Double? {
+        if let p = progress { return min(1, max(0, p)) }
+        guard let pos = positionSeconds, let dur = durationSeconds, dur > 0 else { return nil }
+        return min(1, max(0, Double(pos) / Double(dur)))
     }
 
     enum CodingKeys: String, CodingKey {
-        case item_id, id, title, year, poster_url, kind
-        case position_seconds, duration_seconds
-        case show_title, season_no, episode_no
+        case id, title, year, overview, poster, backdrop, genres, runtime, duration
+        case stream_url, position, progress
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        if let v = try c.decodeIfPresent(Int.self, forKey: .item_id) {
-            itemId = v
-        } else {
-            itemId = try c.decode(Int.self, forKey: .id)
-        }
-        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
         year = try c.decodeIfPresent(Int.self, forKey: .year)
-        posterUrl = try c.decodeIfPresent(String.self, forKey: .poster_url)
-        kind = (try? c.decodeIfPresent(String.self, forKey: .kind)) ?? ""
-        positionSeconds = try c.decodeIfPresent(Double.self, forKey: .position_seconds)
-        durationSeconds = try c.decodeIfPresent(Double.self, forKey: .duration_seconds)
-        showTitle = try c.decodeIfPresent(String.self, forKey: .show_title)
-        seasonNo = try c.decodeIfPresent(Int.self, forKey: .season_no)
-        episodeNo = try c.decodeIfPresent(Int.self, forKey: .episode_no)
+        overview = try c.decodeIfPresent(String.self, forKey: .overview)
+        poster = try c.decodeIfPresent(String.self, forKey: .poster)
+        backdrop = try c.decodeIfPresent(String.self, forKey: .backdrop)
+        // genres arrives as a plain string from the database; tolerate an
+        // array too, so a future server change cannot break decoding.
+        if let g = try? c.decodeIfPresent(String.self, forKey: .genres) {
+            genres = g
+        } else if let arr = try? c.decodeIfPresent([String].self, forKey: .genres) {
+            genres = arr?.joined(separator: ", ")
+        } else {
+            genres = nil
+        }
+        runtimeMinutes = try c.decodeIfPresent(Int.self, forKey: .runtime)
+        durationSeconds = try c.decodeIfPresent(Int.self, forKey: .duration)
+        streamUrl = try c.decodeIfPresent(String.self, forKey: .stream_url)
+        positionSeconds = try c.decodeIfPresent(Int.self, forKey: .position)
+        progress = try c.decodeIfPresent(Double.self, forKey: .progress)
     }
 }
 
-struct HomeRow: Codable, Identifiable, Hashable {
-    let key: String
-    let title: String
-    let kind: String
-    let items: [HomeItem]
-
-    var id: String { key }
-}
+// MARK: - Home
 
 struct HomeResponse: Codable {
-    let hero: HomeItem?
-    let rows: [HomeRow]
+    let continueWatching: [TitleItem]?
+    let movies: [TitleItem]?
+    let shows: [TitleItem]?
+    let myList: [TitleItem]?
+
+    enum CodingKeys: String, CodingKey {
+        case continueWatching = "continue_watching"
+        case movies, shows
+        case myList = "my_list"
+    }
 }
 
 // MARK: - Detail
 
-struct PlaybackInfo: Codable {
-    let fileUrl: String?
-    let resumeHintSec: Double?
-    let resumeLabel: String?
-    let error: String?
-
-    enum CodingKeys: String, CodingKey {
-        case fileUrl = "file_url"
-        case resumeHintSec = "resume_hint_sec"
-        case resumeLabel = "resume_label"
-        case error
-    }
+struct MovieDetailResponse: Codable {
+    let movie: TitleItem?
 }
 
-struct WatchProgress: Codable {
-    let position_seconds: Double?
-    let duration_seconds: Double?
-}
-
-struct MovieDetail: Codable {
-    let id: Int
-    let title: String
-    let year: Int?
-    let overview: String?
-    let posterUrl: String?
-    let backdropUrl: String?
-    let genres: String?
-    let isFavorite: Bool?
-    let progress: WatchProgress?
-    let playback: PlaybackInfo?
-
-    enum CodingKeys: String, CodingKey {
-        case id, title, year, overview, genres
-        case posterUrl = "poster_url"
-        case backdropUrl = "backdrop_url"
-        case isFavorite = "is_favorite"
-        case progress, playback
-    }
-}
-
-struct Episode: Codable, Identifiable, Hashable {
-    let id: Int
-    let episodeNumber: Int?
-    let title: String?
-    let overview: String?
-    let stillUrl: String?
-    let positionSeconds: Double?
-    let durationSeconds: Double?
-
-    var progress: Double? {
-        guard let p = positionSeconds, let d = durationSeconds, d > 0 else { return nil }
-        return min(1, max(0, p / d))
-    }
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case episodeNumber = "episode_number"
-        case title, overview
-        case stillUrl = "still_url"
-        case positionSeconds = "position_seconds"
-        case durationSeconds = "duration_seconds"
-    }
-}
-
-struct Season: Codable, Identifiable, Hashable {
-    let id: Int
-    let seasonNumber: Int?
-    let episodes: [Episode]?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case seasonNumber = "season_number"
-        case episodes
-    }
-}
-
-struct ShowDetail: Codable {
-    let id: Int
-    let title: String
-    let year: Int?
-    let overview: String?
-    let posterUrl: String?
-    let backdropUrl: String?
-    let genres: String?
-    let isFavorite: Bool?
-    let seasons: [Season]?
-
-    enum CodingKeys: String, CodingKey {
-        case id, title, year, overview, genres, seasons
-        case posterUrl = "poster_url"
-        case backdropUrl = "backdrop_url"
-        case isFavorite = "is_favorite"
-    }
-}
-
-struct NextRef: Codable {
-    let id: Int
-    let episode_number: Int?
-    let season_number: Int?
-}
-
-struct EpisodeDetail: Codable {
+struct EpisodeItem: Codable, Identifiable, Hashable {
     let id: Int
     let title: String?
+    let episodeNumber: Int
     let overview: String?
-    let episodeNumber: Int?
-    let seasonNumber: Int?
-    let showTitle: String?
-    let showId: Int?
-    let playback: PlaybackInfo?
-    let next: NextRef?
+    let still: String?
+    let durationSeconds: Int?
+    let streamUrl: String?
 
     enum CodingKeys: String, CodingKey {
-        case id, title, overview
-        case episodeNumber = "episode_number"
-        case seasonNumber = "season_number"
-        case showTitle = "show_title"
-        case showId = "show_id"
-        case playback, next
+        case id, title, overview, still, duration
+        case episodeNumber = "episode_num"
+        case streamUrl = "stream_url"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        title = try c.decodeIfPresent(String.self, forKey: .title)
+        episodeNumber = try c.decodeIfPresent(Int.self, forKey: .episodeNumber) ?? 0
+        overview = try c.decodeIfPresent(String.self, forKey: .overview)
+        still = try c.decodeIfPresent(String.self, forKey: .still)
+        durationSeconds = try c.decodeIfPresent(Int.self, forKey: .duration)
+        streamUrl = try c.decodeIfPresent(String.self, forKey: .streamUrl)
     }
 }
 
-// MARK: - Search / library
+struct SeasonItem: Codable, Identifiable, Hashable {
+    let id: Int
+    let seasonNumber: Int
+    let episodes: [EpisodeItem]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, episodes
+        case seasonNumber = "season_num"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        seasonNumber = try c.decodeIfPresent(Int.self, forKey: .seasonNumber) ?? 0
+        episodes = try c.decodeIfPresent([EpisodeItem].self, forKey: .episodes)
+    }
+}
+
+struct ShowDetailItem: Codable {
+    let id: Int
+    let title: String
+    let overview: String?
+    let poster: String?
+    let backdrop: String?
+    let seasons: [SeasonItem]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, overview, poster, backdrop, seasons
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        overview = try c.decodeIfPresent(String.self, forKey: .overview)
+        poster = try c.decodeIfPresent(String.self, forKey: .poster)
+        backdrop = try c.decodeIfPresent(String.self, forKey: .backdrop)
+        seasons = try c.decodeIfPresent([SeasonItem].self, forKey: .seasons)
+    }
+}
+
+struct ShowDetailResponse: Codable {
+    let show: ShowDetailItem?
+}
+
+// MARK: - Search
 
 struct SearchResponse: Codable {
-    let movies: [HomeItem]?
-    let shows: [HomeItem]?
-}
-
-struct FavoritesResponse: Codable {
-    let movies: [HomeItem]?
-    let shows: [HomeItem]?
+    let movies: [TitleItem]?
+    let shows: [TitleItem]?
 }
 
 // MARK: - Navigation
@@ -256,5 +213,11 @@ struct FavoritesResponse: Codable {
 enum Destination: Hashable {
     case movie(Int)
     case show(Int)
-    case episode(Int)
+
+    init(kind: String, id: Int) {
+        if kind == "movie" { self = .movie(id) } else { self = .show(id) }
+    }
 }
+
+// Backwards-compatible alias used by older views during the rewrite.
+typealias HomeItem = TitleItem

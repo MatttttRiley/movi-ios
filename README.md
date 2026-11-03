@@ -1,7 +1,7 @@
 # Movi for iOS
 
 Native Netflix-style iOS app for the Movi personal streaming site
-(https://movi.byethost6.com). SwiftUI + AVKit, no web views.
+(https://movi.webs.vc). SwiftUI + AVKit, no web views.
 
 ## Screens
 

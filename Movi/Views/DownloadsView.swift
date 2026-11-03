@@ -5,20 +5,19 @@ struct DownloadsView: View {
     @State private var playLocal: PlayLocal?
 
     var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
+        Group {
             if store.items.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 44))
-                        .foregroundColor(.white.opacity(0.3))
-                    Text("No downloads yet.")
-                        .foregroundColor(.white.opacity(0.6))
-                    Text("Tap Download on any movie or episode to watch it offline.")
-                        .font(.callout)
-                        .foregroundColor(.white.opacity(0.4))
+                if #available(iOS 17, *) {
+                    ContentUnavailableView(
+                        "No Downloads Yet",
+                        systemImage: "arrow.down.circle",
+                        description: Text("Tap Download on any movie or episode to watch it offline.")
+                    )
+                } else {
+                    Text("No downloads yet. Tap Download on any movie or episode to watch it offline.")
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
+                        .padding()
                 }
             } else {
                 List {
@@ -29,17 +28,14 @@ struct DownloadsView: View {
                                 if item.status == .done, let url = item.localURL {
                                     playLocal = PlayLocal(url: url)
                                 } else if item.status == .failed {
-                                    store.start(kind: item.kind, libraryId: item.libraryId,
-                                                title: item.title, posterUrl: item.posterUrl)
+                                    store.retry(item)
                                 }
                             },
                             onDelete: { store.delete(item) }
                         )
-                        .listRowBackground(Color.moviBackground)
                     }
                 }
                 .listStyle(.plain)
-                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle("Downloads")
@@ -68,11 +64,10 @@ private struct DownloadRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                AsyncPoster(url: item.posterUrl, width: 64, cornerRadius: 6)
+                AsyncPoster(url: item.posterUrl, width: 64, cornerRadius: 6, accessibilityLabel: item.title)
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.title)
                         .font(.headline)
-                        .foregroundColor(.white)
                         .lineLimit(2)
                     if item.status == .downloading || item.status == .preparing {
                         ProgressView(value: item.progress)
@@ -80,13 +75,13 @@ private struct DownloadRow: View {
                     }
                     Text(item.statusLabel)
                         .font(.caption)
-                        .foregroundColor(item.status == .failed ? .red : .white.opacity(0.55))
+                        .foregroundStyle(item.status == .failed ? .red : .secondary)
                 }
                 Spacer()
                 if item.status == .done {
                     Image(systemName: "play.circle.fill")
                         .font(.title2)
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.vertical, 6)
@@ -98,6 +93,7 @@ private struct DownloadRow: View {
                 Label("Delete", systemImage: "trash")
             }
         }
+        .accessibilityLabel("\(item.title), \(item.statusLabel)")
     }
 }
 
@@ -108,6 +104,7 @@ struct DownloadButton: View {
     let libraryId: Int
     let title: String
     let posterUrl: String?
+    let streamUrl: String?
     var compact = false
 
     @ObservedObject private var store = DownloadStore.shared
@@ -116,25 +113,23 @@ struct DownloadButton: View {
         let existing = store.item(kind: kind, libraryId: libraryId)
         Button {
             if existing?.status == .failed {
-                store.start(kind: kind, libraryId: libraryId, title: title, posterUrl: posterUrl)
+                store.retry(existing!)
             } else if existing == nil {
-                store.start(kind: kind, libraryId: libraryId, title: title, posterUrl: posterUrl)
+                store.start(kind: kind, libraryId: libraryId, title: title, posterUrl: posterUrl, streamUrl: streamUrl)
             }
         } label: {
             if compact {
                 Image(systemName: icon(for: existing))
                     .font(.title3)
-                    .foregroundColor(.white.opacity(0.8))
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 44, minHeight: 44)
             } else {
                 Label(label(for: existing), systemImage: icon(for: existing))
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .moviGlassCapsule()
             }
         }
-        .disabled(existing != nil && existing?.status != .failed)
+        .buttonStyle(compact ? .plain : .bordered)
+        .disabled((existing != nil && existing?.status != .failed) || streamUrl == nil || streamUrl?.isEmpty == true)
+        .accessibilityLabel(label(for: existing) + " " + title)
     }
 
     private func icon(for existing: DownloadItem?) -> String {

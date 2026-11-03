@@ -1,58 +1,53 @@
 import SwiftUI
 
-// MARK: - Movie detail
+// MARK: - Movie detail (live shape: { movie: TitleItem })
 
 struct MovieDetailView: View {
     let movieId: Int
     @EnvironmentObject var app: AppState
-    @State private var movie: MovieDetail?
+    @State private var movie: TitleItem?
+    @State private var isFavorite = false
+    @State private var myList: [TitleItem] = []
     @State private var error = ""
     @State private var playRequest: PlayRequest?
 
     var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
+        Group {
             if let m = movie {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        BackdropBanner(imageUrl: m.backdropUrl ?? m.posterUrl, height: 240)
+                        BackdropBanner(imageUrl: m.backdrop, fallbackPosterUrl: m.poster, height: 240)
                         VStack(alignment: .leading, spacing: 12) {
                             Text(m.title)
-                                .font(.system(size: 28, weight: .black))
-                                .foregroundColor(.white)
+                                .font(.title.bold())
+                                .accessibilityAddTraits(.isHeader)
                             HStack(spacing: 10) {
                                 if let y = m.year { Text("\(y)") }
                                 if let g = m.genres, !g.isEmpty { Text(g.replacingOccurrences(of: ",", with: " • ")) }
+                                if let rt = m.runtimeMinutes { Text("\(rt) min") }
                             }
                             .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundStyle(.secondary)
                             if let ov = m.overview, !ov.isEmpty {
-                                Text(ov)
-                                    .foregroundColor(.white.opacity(0.85))
+                                Text(ov).font(.body)
                             }
-                            MoviGlassGroup(spacing: 12) {
-                                HStack(spacing: 12) {
-                                    Button {
-                                        playRequest = PlayRequest(kind: "movie", itemId: m.id)
-                                    } label: {
-                                        Label("Play", systemImage: "play.fill")
-                                            .font(.headline)
-                                            .foregroundColor(.white)
-                                            .padding(.horizontal, 28)
-                                            .padding(.vertical, 10)
-                                            .moviPlayChrome()
-                                    }
-                                    FavoriteButton(kind: "movie", id: m.id, isFavorite: m.isFavorite ?? false) {
-                                        await reload()
-                                    }
-                                    DownloadButton(kind: "movie", libraryId: m.id,
-                                                   title: m.title, posterUrl: m.posterUrl)
+                            HStack(spacing: 12) {
+                                Button {
+                                    playRequest = PlayRequest(kind: "movie", itemId: m.id, directUrl: m.streamUrl, displayTitle: m.title)
+                                } label: {
+                                    Label("Play", systemImage: "play.fill")
                                 }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.moviAccent)
+                                FavoriteButton(isFavorite: isFavorite) {
+                                    await toggleFavorite()
+                                }
+                                DownloadButton(kind: "movie", libraryId: m.id, title: m.title, posterUrl: m.poster, streamUrl: m.streamUrl)
                             }
-                            if let label = m.playback?.resumeLabel {
-                                Text(label)
+                            if let pos = m.positionSeconds, pos > 0 {
+                                Text("Resume from \(formattedTime(pos))")
                                     .font(.callout)
-                                    .foregroundColor(.moviAccent)
+                                    .foregroundStyle(.moviAccent)
                             }
                         }
                         .padding(.horizontal, 20)
@@ -60,80 +55,98 @@ struct MovieDetailView: View {
                     }
                 }
             } else if !error.isEmpty {
-                Text(error).foregroundColor(.red)
+                ErrorStateView(message: error) { Task { await reload() } }
             } else {
-                ProgressView()
+                ProgressView("Loading…").frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
         .fullScreenCover(item: $playRequest) { req in
-            PlayerLoader(kind: req.kind, itemId: req.itemId)
+            PlayerLoader(kind: req.kind, itemId: req.itemId, directUrl: req.directUrl, displayTitle: req.displayTitle)
                 .environmentObject(app)
         }
     }
 
+    private func formattedTime(_ s: Int) -> String {
+        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
+    }
+
     private func reload() async {
         do {
-            let m: MovieDetail = try await APIClient.shared.get("movie", params: ["id": "\(movieId)"])
+            let r: MovieDetailResponse = try await APIClient.shared.get("movie", params: ["id": "\(movieId)"])
+            guard let m = r.movie else { error = "This title couldn't be found."; return }
             movie = m
             error = ""
+            // My List membership comes from home (no favorites endpoint).
+            if let h: HomeResponse = try? await APIClient.shared.get("app_home") {
+                myList = h.myList ?? []
+                isFavorite = myList.contains { $0.id == movieId }
+            }
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
             error = "Couldn't load this title."
         }
     }
+
+    private func toggleFavorite() async {
+        if let fav = await app.toggleFavorite(movieId: movieId) {
+            isFavorite = fav
+        }
+    }
 }
 
-// MARK: - Show detail
+// MARK: - Show detail (live shape: { show: { seasons: [{ season_num, episodes }] } })
 
 struct ShowDetailView: View {
     let showId: Int
     @EnvironmentObject var app: AppState
-    @State private var show: ShowDetail?
+    @State private var show: ShowDetailItem?
     @State private var error = ""
     @State private var seasonIndex = 0
     @State private var playRequest: PlayRequest?
 
     var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
+        Group {
             if let s = show {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        BackdropBanner(imageUrl: s.backdropUrl ?? s.posterUrl, height: 240)
+                        BackdropBanner(imageUrl: s.backdrop, fallbackPosterUrl: s.poster, height: 240)
                         VStack(alignment: .leading, spacing: 12) {
                             Text(s.title)
-                                .font(.system(size: 28, weight: .black))
-                                .foregroundColor(.white)
-                            HStack(spacing: 10) {
-                                if let y = s.year { Text("\(y)") }
-                                if let g = s.genres, !g.isEmpty { Text(g.replacingOccurrences(of: ",", with: " • ")) }
-                            }
-                            .font(.subheadline)
-                            .foregroundColor(.white.opacity(0.6))
+                                .font(.title.bold())
+                                .accessibilityAddTraits(.isHeader)
                             if let ov = s.overview, !ov.isEmpty {
-                                Text(ov).foregroundColor(.white.opacity(0.85))
-                            }
-                            FavoriteButton(kind: "show", id: s.id, isFavorite: s.isFavorite ?? false) {
-                                await reload()
+                                Text(ov).font(.body)
                             }
                             if let seasons = s.seasons, !seasons.isEmpty {
-                                Picker("Season", selection: $seasonIndex) {
+                                // HIG: a Menu, not a segmented control, when
+                                // there can be many seasons.
+                                Menu {
                                     ForEach(seasons.indices, id: \.self) { i in
-                                        Text("Season \(seasons[i].seasonNumber ?? i + 1)").tag(i)
+                                        Button("Season \(seasons[i].seasonNumber)") { seasonIndex = i }
                                     }
+                                } label: {
+                                    Label("Season \(seasons[min(seasonIndex, seasons.count - 1)].seasonNumber)", systemImage: "chevron.up.chevron.down")
                                 }
-                                .pickerStyle(.segmented)
+                                .buttonStyle(.bordered)
+                                .accessibilityLabel("Choose season")
                                 if seasonIndex < seasons.count,
                                    let eps = seasons[seasonIndex].episodes {
                                     ForEach(eps) { ep in
-                                        EpisodeRow(episode: ep, showTitle: s.title, posterUrl: s.posterUrl) {
-                                            playRequest = PlayRequest(kind: "episode", itemId: ep.id)
+                                        EpisodeRow(episode: ep, showTitle: s.title, posterUrl: s.poster) {
+                                            var req = PlayRequest(kind: "episode", itemId: ep.id)
+                                            req.directUrl = ep.streamUrl
+                                            req.displayTitle = [s.title, ep.title].compactMap { $0 }.joined(separator: " — ")
+                                            playRequest = req
                                         }
                                     }
                                 }
+                            } else {
+                                Text("No episodes available yet.")
+                                    .foregroundStyle(.secondary)
                             }
                         }
                         .padding(.horizontal, 20)
@@ -141,24 +154,26 @@ struct ShowDetailView: View {
                     }
                 }
             } else if !error.isEmpty {
-                Text(error).foregroundColor(.red)
+                ErrorStateView(message: error) { Task { await reload() } }
             } else {
-                ProgressView()
+                ProgressView("Loading…").frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationBarTitleDisplayMode(.inline)
         .task { await reload() }
         .fullScreenCover(item: $playRequest) { req in
-            PlayerLoader(kind: req.kind, itemId: req.itemId)
+            PlayerLoader(kind: req.kind, itemId: req.itemId, directUrl: req.directUrl, displayTitle: req.displayTitle)
                 .environmentObject(app)
         }
     }
 
     private func reload() async {
         do {
-            let s: ShowDetail = try await APIClient.shared.get("show", params: ["id": "\(showId)"])
+            let r: ShowDetailResponse = try await APIClient.shared.get("show", params: ["id": "\(showId)"])
+            guard let s = r.show else { error = "This show couldn't be found."; return }
             show = s
             error = ""
+            if seasonIndex >= (s.seasons?.count ?? 0) { seasonIndex = 0 }
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
@@ -168,7 +183,7 @@ struct ShowDetailView: View {
 }
 
 struct EpisodeRow: View {
-    let episode: Episode
+    let episode: EpisodeItem
     let showTitle: String?
     let posterUrl: String?
     let onPlay: () -> Void
@@ -177,94 +192,56 @@ struct EpisodeRow: View {
         HStack(spacing: 12) {
             Button(action: onPlay) {
                 HStack(spacing: 12) {
-                    ZStack(alignment: .bottom) {
-                        AsyncPoster(url: episode.stillUrl, width: 96, cornerRadius: 6)
-                        if let p = episode.progress {
-                            ProgressView(value: p).tint(.red).padding(4)
-                        }
-                    }
+                    AsyncPoster(url: episode.still ?? posterUrl, width: 96, cornerRadius: 6, accessibilityLabel: episode.title ?? "Episode")
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("E\(episode.episodeNumber ?? 0) · \(episode.title ?? "Episode")")
+                        Text("Episode \(episode.episodeNumber) · \(episode.title ?? "Episode")")
                             .font(.headline)
-                            .foregroundColor(.white)
+                            .lineLimit(2)
                         if let ov = episode.overview, !ov.isEmpty {
                             Text(ov)
                                 .font(.caption)
-                                .foregroundColor(.white.opacity(0.6))
+                                .foregroundStyle(.secondary)
                                 .lineLimit(2)
+                        }
+                        if let dur = episode.durationSeconds, dur > 0 {
+                            Text("\(dur / 60) min")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
                     }
                     Spacer()
                     Image(systemName: "play.circle.fill")
-                        .font(.title)
-                        .foregroundColor(.white.opacity(0.8))
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Play episode \(episode.episodeNumber), \(episode.title ?? "")")
             DownloadButton(kind: "episode", libraryId: episode.id,
                            title: [showTitle, episode.title].compactMap { $0 }.joined(separator: " — "),
-                           posterUrl: posterUrl, compact: true)
+                           posterUrl: posterUrl, streamUrl: episode.streamUrl, compact: true)
         }
         .padding(.vertical, 6)
     }
 }
 
-// MARK: - Episode deep-link loader (from Continue Watching)
-
-struct EpisodeLoaderView: View {
-    let episodeId: Int
-    @EnvironmentObject var app: AppState
-    @State private var playRequest: PlayRequest?
-
-    var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
-            ProgressView()
-        }
-        .onAppear {
-            playRequest = PlayRequest(kind: "episode", itemId: episodeId)
-        }
-        .fullScreenCover(item: $playRequest) { req in
-            PlayerLoader(kind: req.kind, itemId: req.itemId)
-                .environmentObject(app)
-        }
-    }
-}
-
-// MARK: - Favorite toggle
+// MARK: - Favorite toggle (movies only, server-side)
 
 struct FavoriteButton: View {
-    let kind: String
-    let id: Int
-    @State var isFavorite: Bool
-    let onChange: () async -> Void
-    @EnvironmentObject var app: AppState
+    var isFavorite: Bool
+    let onToggle: () async -> Void
     @State private var busy = false
 
     var body: some View {
         Button {
-            Task { await toggle() }
+            Task { busy = true; await onToggle(); busy = false }
         } label: {
             Label(isFavorite ? "In My List" : "My List",
                   systemImage: isFavorite ? "bookmark.fill" : "bookmark")
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .moviGlassCapsule()
         }
+        .buttonStyle(.bordered)
         .disabled(busy)
-    }
-
-    private func toggle() async {
-        busy = true
-        do {
-            _ = try await APIClient.shared.postForm("favorite",
-                fields: app.csrfFields(["kind": kind, "id": "\(id)", "action": "toggle"]))
-            isFavorite.toggle()
-            await onChange()
-        } catch { }
-        busy = false
+        .accessibilityLabel(isFavorite ? "Remove from My List" : "Add to My List")
     }
 }

@@ -1,62 +1,51 @@
 import SwiftUI
 
+/// Profile picker, shown ONLY when an account has more than one profile.
+/// Single-profile accounts never see this screen (AppState auto-selects).
+/// Standard list rows, not a grid of colored circles.
 struct ProfilesView: View {
     @EnvironmentObject var app: AppState
     @State private var busyId: Int?
 
     var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
-            VStack(spacing: 28) {
-                Spacer()
-                Text("Who's watching?")
-                    .font(.largeTitle.bold())
-                    .foregroundColor(.white)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 20)], spacing: 24) {
-                    ForEach(app.profiles) { p in
-                        Button {
-                            Task { await pick(p) }
-                        } label: {
-                            VStack(spacing: 10) {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(hex: p.color) ?? .gray)
-                                        .frame(width: 88, height: 88)
-                                    if busyId == p.id {
-                                        ProgressView().tint(.white)
-                                    } else {
-                                        Text(String(p.name.prefix(1)).uppercased())
-                                            .font(.system(size: 36, weight: .bold))
-                                            .foregroundColor(.white)
-                                    }
+        NavigationStack {
+            List(app.profiles) { p in
+                Button {
+                    Task { await pick(p) }
+                } label: {
+                    HStack(spacing: 12) {
+                        Circle()
+                            .fill(Color(hex: p.color ?? "") ?? .gray)
+                            .frame(width: 36, height: 36)
+                            .overlay {
+                                if busyId == p.id {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Text(String(p.name.prefix(1)).uppercased())
+                                        .font(.headline)
+                                        .foregroundStyle(.white)
                                 }
-                                Text(p.name)
-                                    .foregroundColor(.white.opacity(0.85))
-                                    .lineLimit(1)
                             }
-                        }
-                        .disabled(busyId != nil)
+                        Text(p.name)
                     }
                 }
-                .padding(.horizontal, 40)
-                if !app.error.isEmpty {
-                    Text(app.error)
-                        .foregroundColor(.red)
-                        .font(.callout)
+                .disabled(busyId != nil)
+            }
+            .navigationTitle("Who's Watching?")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Sign Out") { Task { await app.logout() } }
                 }
-                Spacer()
-                Button("Log out") {
-                    Task { await app.logout() }
-                }
-                .foregroundColor(.white.opacity(0.5))
-                .padding(.bottom, 24)
+            }
+            if !app.error.isEmpty {
+                Text(app.error).foregroundStyle(.red).font(.callout)
             }
         }
     }
 
     private func pick(_ p: Profile) async {
         busyId = p.id
-        await app.selectProfile(p)
+        await app.selectProfileFromPicker(p)
         busyId = nil
     }
 }

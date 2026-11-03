@@ -1,5 +1,8 @@
 import SwiftUI
 
+/// Standard tab bar (HIG: at most a handful of top-level destinations,
+/// system tab items, one NavigationStack per tab so back behavior is
+/// per-tab and never leaks between tabs).
 struct MainTabsView: View {
     @EnvironmentObject var app: AppState
 
@@ -44,8 +47,6 @@ struct MainTabsView: View {
             MovieDetailView(movieId: id)
         case .show(let id):
             ShowDetailView(showId: id)
-        case .episode(let id):
-            EpisodeLoaderView(episodeId: id)
         }
     }
 }

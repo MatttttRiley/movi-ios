@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// Standard sign-in form (HIG: familiar words, system controls, autofill).
+/// No jokes in the labels, no custom chrome: email + password, Sign In.
 struct LoginView: View {
     @EnvironmentObject var app: AppState
     @State private var email = ""
@@ -10,42 +12,40 @@ struct LoginView: View {
     enum Field { case email, password }
 
     var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
+        ScrollView {
             VStack(spacing: 24) {
-                Spacer()
+                Spacer(minLength: 40)
                 Text("Movi")
-                    .font(.system(size: 52, weight: .black))
-                    .foregroundColor(.moviAccent)
-                Text("Who goes there?")
-                    .font(.title2)
-                    .foregroundColor(.white.opacity(0.8))
+                    .font(.largeTitle.bold())
+                    .foregroundStyle(.moviAccent)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Sign in to your account.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                 VStack(spacing: 12) {
                     TextField("Email", text: $email)
                         .keyboardType(.emailAddress)
                         .textContentType(.emailAddress)
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
                         .focused($focusedField, equals: .email)
                         .submitLabel(.next)
                         .onSubmit { focusedField = .password }
                         .padding()
-                        .background(Color.moviCard)
-                        .cornerRadius(10)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
                     SecureField("Password", text: $password)
                         .textContentType(.password)
                         .focused($focusedField, equals: .password)
                         .submitLabel(.go)
                         .onSubmit { Task { await submit() } }
                         .padding()
-                        .background(Color.moviCard)
-                        .cornerRadius(10)
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10))
                 }
-                .foregroundColor(.white)
                 if !app.error.isEmpty {
                     Text(app.error)
                         .font(.callout)
-                        .foregroundColor(.red)
+                        .foregroundStyle(.red)
                         .multilineTextAlignment(.center)
                 }
                 Button {
@@ -54,14 +54,14 @@ struct LoginView: View {
                     if busy {
                         ProgressView().tint(.white)
                     } else {
-                        Text("Enter")
+                        Text("Sign In")
                             .font(.headline)
-                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding()
-                .moviPlayChrome()
+                .buttonStyle(.borderedProminent)
+                .tint(.moviAccent)
+                .controlSize(.large)
                 .disabled(busy || email.isEmpty || password.isEmpty)
                 Spacer()
             }

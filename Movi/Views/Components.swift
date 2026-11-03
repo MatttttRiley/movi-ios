@@ -1,5 +1,13 @@
 import SwiftUI
 
+// MARK: - Design tokens (HIG: semantic colors, system type, real touch targets)
+//
+// No forced dark mode, no fixed font sizes, no white-on-dark text baked
+// into every view. Views use system colors and text styles so Dynamic
+// Type, Bold Text, Increase Contrast and both appearances just work.
+// The single brand accent is used consistently; error red is reserved
+// for actual errors, never for progress or decoration.
+
 extension Color {
     init?(hex: String) {
         var h = hex.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -12,8 +20,6 @@ extension Color {
         )
     }
 
-    static let moviBackground = Color(red: 0.04, green: 0.04, blue: 0.07)
-    static let moviCard = Color(red: 0.10, green: 0.10, blue: 0.14)
     static let moviAccent = Color(red: 0.90, green: 0.16, blue: 0.22)
 }
 
@@ -23,6 +29,7 @@ struct AsyncPoster: View {
     let url: String?
     let width: CGFloat
     var cornerRadius: CGFloat = 8
+    var accessibilityLabel: String = "Poster"
 
     var body: some View {
         Group {
@@ -34,9 +41,9 @@ struct AsyncPoster: View {
                     case .failure:
                         placeholder
                     case .empty:
-                        Color.moviCard
+                        Color(.secondarySystemBackground)
                     @unknown default:
-                        Color.moviCard
+                        Color(.secondarySystemBackground)
                     }
                 }
             } else {
@@ -45,14 +52,15 @@ struct AsyncPoster: View {
         }
         .frame(width: width, height: width * 1.5)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        .accessibilityLabel(accessibilityLabel)
     }
 
     private var placeholder: some View {
         ZStack {
-            Color.moviCard
+            Color(.secondarySystemBackground)
             Image(systemName: "film")
-                .foregroundColor(.white.opacity(0.25))
-                .font(.title)
+                .foregroundStyle(.secondary)
+                .font(.title3)
         }
     }
 }
@@ -60,29 +68,25 @@ struct AsyncPoster: View {
 // MARK: - Cards & rows
 
 struct PosterCard: View {
-    let item: HomeItem
+    let item: TitleItem
+    let kind: String
     let width: CGFloat = 112
 
     var body: some View {
-        Group {
-            if let dest = item.destination {
-                NavigationLink(value: dest) {
-                    cardContent
-                }
-            } else {
-                cardContent
-            }
+        NavigationLink(value: Destination(kind: kind, id: item.id)) {
+            cardContent
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(item.title)
     }
 
     private var cardContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottom) {
-                AsyncPoster(url: item.posterUrl, width: width)
-                if let p = item.progress {
+                AsyncPoster(url: item.poster, width: width, accessibilityLabel: item.title)
+                if let p = item.progressFraction {
                     ProgressView(value: p)
-                        .tint(.red)
+                        .tint(.moviAccent)
                         .padding(.horizontal, 6)
                         .padding(.bottom, 6)
                 }
@@ -90,16 +94,11 @@ struct PosterCard: View {
             Text(item.title)
                 .font(.caption)
                 .lineLimit(1)
-                .foregroundColor(.white.opacity(0.9))
                 .frame(width: width, alignment: .leading)
-            if item.kind == "episode", let sn = item.seasonNo, let en = item.episodeNo {
-                Text("S\(sn) E\(en)")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.5))
-            } else if let y = item.year {
+            if let y = item.year {
                 Text("\(y)")
                     .font(.caption2)
-                    .foregroundColor(.white.opacity(0.5))
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(width: width)
@@ -107,18 +106,19 @@ struct PosterCard: View {
 }
 
 struct HomeRowView: View {
-    let row: HomeRow
+    let title: String
+    let items: [TitleItem]
+    let kind: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(row.title)
+            Text(title)
                 .font(.headline)
-                .foregroundColor(.white)
                 .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 12) {
-                    ForEach(row.items) { item in
-                        PosterCard(item: item)
+                    ForEach(items) { item in
+                        PosterCard(item: item, kind: kind)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -131,6 +131,7 @@ struct HomeRowView: View {
 
 struct BackdropBanner: View {
     let imageUrl: String?
+    let fallbackPosterUrl: String?
     let height: CGFloat = 300
 
     var body: some View {
@@ -142,21 +143,59 @@ struct BackdropBanner: View {
                         case .success(let img):
                             img.resizable().scaledToFill()
                         default:
-                            Color.moviCard
+                            blurredFallback
                         }
                     }
                 } else {
-                    Color.moviCard
+                    blurredFallback
                 }
             }
             .frame(height: height)
             .clipped()
             LinearGradient(
-                colors: [.clear, .clear, Color.moviBackground.opacity(0.9)],
+                colors: [.clear, Color(.systemBackground).opacity(0.15), Color(.systemBackground).opacity(0.95)],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .frame(height: height)
         }
+    }
+
+    /// When a title has no backdrop, blur its poster behind the header
+    /// instead of showing a flat empty card (the old hero bug).
+    private var blurredFallback: some View {
+        Group {
+            if let fallbackPosterUrl, let u = URL(string: fallbackPosterUrl) {
+                AsyncImage(url: u) { phase in
+                    switch phase {
+                    case .success(let img):
+                        img.resizable().scaledToFill().blur(radius: 24)
+                    default:
+                        Color(.secondarySystemBackground)
+                    }
+                }
+            } else {
+                Color(.secondarySystemBackground)
+            }
+        }
+    }
+}
+
+// MARK: - Standard error / empty states (HIG: ContentUnavailableView)
+
+struct ErrorStateView: View {
+    let message: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(message)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            Button("Try Again", action: retry)
+                .buttonStyle(.bordered)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

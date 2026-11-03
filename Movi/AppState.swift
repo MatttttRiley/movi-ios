@@ -1,7 +1,13 @@
 import Foundation
 import SwiftUI
 
-/// Session state machine: loading -> login -> profiles -> main.
+/// Session state machine: loading -> sign-in -> (profile, only when the
+/// account actually has more than one) -> main.
+///
+/// The server requires a selected profile for home, progress, history and
+/// favorites. Movi accounts normally have exactly one profile, so the app
+/// selects it silently and never shows a picker for a choice that isn't
+/// really a choice. The picker appears only if an account has several.
 @MainActor
 final class AppState: ObservableObject {
     enum Phase {
@@ -12,26 +18,34 @@ final class AppState: ObservableObject {
     @Published var user: APIUser?
     @Published var profiles: [Profile] = []
     @Published var profile: Profile?
-    @Published var csrf = ""
     @Published var error = ""
 
     private let decoder = JSONDecoder()
 
     // MARK: - Bootstrap
 
-    /// If a session cookie survived, skip straight to profiles/home.
     func bootstrap() async {
         do {
             let r: ProfilesResponse = try await APIClient.shared.get("app_profiles")
-            user = nil
-            profiles = r.profiles
-            csrf = r.csrf ?? ""
-            if let cur = r.current_profile_id,
-               let p = profiles.first(where: { $0.id == cur }) {
-                profile = p
+            let list = r.profiles ?? []
+            if list.isEmpty {
+                // No profile rows at all: the session may still be valid for
+                // home, or it may be expired. Home decides, once.
+                let _: HomeResponse = try await APIClient.shared.get("app_home")
                 phase = .main
+                return
+            }
+            profiles = list
+            if list.count == 1 {
+                try await selectProfile(list[0])
             } else {
                 phase = .profiles
+            }
+        } catch let e as APIError {
+            if case .sessionExpired = e {
+                phase = .login
+            } else {
+                phase = .login
             }
         } catch {
             phase = .login
@@ -49,11 +63,11 @@ final class AppState: ObservableObject {
             ])
             let r = try decoder.decode(LoginResponse.self, from: data)
             guard r.ok, let u = r.user else {
-                error = r.error ?? "Login failed."
+                error = r.error ?? "Sign-in failed."
                 return
             }
             user = u
-            await loadProfiles()
+            await bootstrap()
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
@@ -65,48 +79,71 @@ final class AppState: ObservableObject {
         do {
             let _: EmptyResponse = try await APIClient.shared.get("app_logout")
         } catch {
-            // Best effort; local state is dropped regardless.
+            // Best effort; local state and cookies are dropped regardless.
         }
+        APIClient.shared.clearCookies()
         user = nil
         profiles = []
         profile = nil
-        csrf = ""
+        error = ""
         phase = .login
     }
 
     // MARK: - Profiles
 
-    func loadProfiles() async {
-        do {
-            let r: ProfilesResponse = try await APIClient.shared.get("app_profiles")
-            profiles = r.profiles
-            csrf = r.csrf ?? ""
-            phase = .profiles
-        } catch {
-            error = "Couldn't load profiles."
-        }
+    func selectProfile(_ p: Profile) async throws {
+        _ = try await APIClient.shared.postForm("app_profile_select", fields: [
+            "profile_id": "\(p.id)",
+        ])
+        profile = p
+        phase = .main
     }
 
-    func selectProfile(_ p: Profile) async {
+    func selectProfileFromPicker(_ p: Profile) async {
         error = ""
         do {
-            _ = try await APIClient.shared.postForm("app_profile_select", fields: [
-                "profile_id": "\(p.id)",
-            ])
-            profile = p
-            phase = .main
+            try await selectProfile(p)
         } catch {
             error = "Couldn't select that profile."
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Watch state (live api.php field names)
 
-    /// Form fields for CSRF-protected writes (progress, favorites, history).
-    func csrfFields(_ extra: [String: String] = [:]) -> [String: String] {
-        var f = extra
-        f["csrf"] = csrf
-        return f
+    /// Progress: POST progress { type: "movie"|"episode", id, position, duration }.
+    func reportProgress(kind: String, id: Int, position: Double, duration: Double) async {
+        guard duration > 0, position >= 0 else { return }
+        _ = try? await APIClient.shared.postForm("progress", fields: [
+            "type": kind,
+            "id": "\(id)",
+            "position": "\(Int(position))",
+            "duration": "\(Int(duration))",
+        ])
+    }
+
+    /// History: POST history_add { id } (movies only, server-side).
+    func markHistory(movieId: Int) async {
+        guard movieId > 0 else { return }
+        _ = try? await APIClient.shared.postForm("history_add", fields: ["id": "\(movieId)"])
+    }
+
+    /// Favorite toggle: POST favorite { id } (movies only, server-side).
+    /// Returns favorited state; nil means the request failed.
+    func toggleFavorite(movieId: Int) async -> Bool? {
+        struct FavResp: Decodable {
+            let ok: Bool?
+            let favorited: Bool?
+        }
+        do {
+            let data = try await APIClient.shared.postForm("favorite", fields: ["id": "\(movieId)"])
+            return try decoder.decode(FavResp.self, from: data).favorited
+        } catch {
+            return nil
+        }
+    }
+
+    func isFavorite(movieId: Int, myList: [TitleItem]) -> Bool {
+        myList.contains { $0.id == movieId }
     }
 }
 

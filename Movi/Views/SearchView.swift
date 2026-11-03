@@ -1,93 +1,83 @@
 import SwiftUI
 
+/// Standard searchable list (HIG: use .searchable in the navigation bar,
+/// not a custom search box). Results update as you type, debounced so a
+/// fast typist does not fire a request per keystroke. The server needs at
+/// least 2 characters; shorter queries simply show the empty state.
 struct SearchView: View {
     @EnvironmentObject var app: AppState
     @State private var query = ""
-    @State private var movies: [HomeItem] = []
-    @State private var shows: [HomeItem] = []
+    @State private var movies: [TitleItem] = []
+    @State private var shows: [TitleItem] = []
     @State private var searching = false
     @State private var error = ""
+    @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundColor(.white.opacity(0.5))
-                        TextField("Titles", text: $query)
-                            .foregroundColor(.white)
-                            .submitLabel(.search)
-                            .onSubmit { Task { await search() } }
-                        if !query.isEmpty {
-                            Button {
-                                query = ""
-                                movies = []
-                                shows = []
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.white.opacity(0.5))
-                            }
-                        }
-                    }
-                    .padding(12)
-                    .background(Color.moviCard)
-                    .cornerRadius(10)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
-
-                    if searching {
-                        ProgressView().frame(maxWidth: .infinity)
-                    } else if !error.isEmpty {
-                        Text(error).foregroundColor(.red).padding(.horizontal, 16)
-                    } else {
+        Group {
+            if searching && movies.isEmpty && shows.isEmpty {
+                ProgressView("Searching…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if !error.isEmpty {
+                ErrorStateView(message: error) { Task { await searchNow() } }
+            } else if !query.isEmpty && movies.isEmpty && shows.isEmpty {
+                if #available(iOS 17, *) {
+                    ContentUnavailableView.search(text: query)
+                } else {
+                    Text("No results for \(query).").foregroundStyle(.secondary)
+                }
+            } else if query.isEmpty {
+                if #available(iOS 17, *) {
+                    ContentUnavailableView(
+                        "Search Movi",
+                        systemImage: "magnifyingglass",
+                        description: Text("Type at least 2 characters to search movies and shows.")
+                    )
+                } else {
+                    Text("Type at least 2 characters to search movies and shows.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding()
+                }
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
                         if !movies.isEmpty {
-                            resultGrid(title: "Movies", items: movies.map(fixKind("movie")))
+                            resultGrid(title: "Movies", items: movies, kind: "movie")
                         }
                         if !shows.isEmpty {
-                            resultGrid(title: "Shows", items: shows.map(fixKind("show")))
+                            resultGrid(title: "Shows", items: shows, kind: "show")
                         }
-                        if !query.isEmpty && movies.isEmpty && shows.isEmpty && !searching {
-                            Text("No results for \"\(query)\".")
-                                .foregroundColor(.white.opacity(0.5))
-                                .padding(.horizontal, 16)
-                        }
+                        Spacer(minLength: 24)
                     }
-                    Spacer(minLength: 24)
+                    .padding(.top, 8)
                 }
             }
         }
         .navigationTitle("Search")
         .navigationBarTitleDisplayMode(.large)
+        .searchable(text: $query, prompt: "Movies and shows")
+        .onChange(of: query, perform: { _ in scheduleSearch() })
+        .onDisappear { searchTask?.cancel() }
     }
 
-    /// Search results carry no `kind`; stamp it so cards navigate correctly.
-    private func fixKind(_ kind: String) -> (HomeItem) -> HomeItem {
-        { item in
-            HomeItem(itemId: item.itemId, title: item.title, year: item.year,
-                     posterUrl: item.posterUrl, kind: kind,
-                     positionSeconds: nil, durationSeconds: nil,
-                     showTitle: nil, seasonNo: nil, episodeNo: nil)
+    private func scheduleSearch() {
+        searchTask?.cancel()
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard q.count >= 2 else {
+            movies = []
+            shows = []
+            error = ""
+            searching = false
+            return
+        }
+        searchTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            await searchNow()
         }
     }
 
-    private func resultGrid(title: String, items: [HomeItem]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 12)], spacing: 16) {
-                ForEach(items) { item in
-                    PosterCard(item: item)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private func search() async {
+    private func searchNow() async {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard q.count >= 2 else { return }
         searching = true
@@ -103,23 +93,16 @@ struct SearchView: View {
         }
         searching = false
     }
-}
 
-// MARK: - HomeItem convenience init for stamping kinds
-
-extension HomeItem {
-    init(itemId: Int, title: String, year: Int?, posterUrl: String?, kind: String,
-         positionSeconds: Double?, durationSeconds: Double?,
-         showTitle: String?, seasonNo: Int?, episodeNo: Int?) {
-        self.itemId = itemId
-        self.title = title
-        self.year = year
-        self.posterUrl = posterUrl
-        self.kind = kind
-        self.positionSeconds = positionSeconds
-        self.durationSeconds = durationSeconds
-        self.showTitle = showTitle
-        self.seasonNo = seasonNo
-        self.episodeNo = episodeNo
+    private func resultGrid(title: String, items: [TitleItem], kind: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline).padding(.horizontal, 16)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 12)], spacing: 16) {
+                ForEach(items) { item in
+                    PosterCard(item: item, kind: kind)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
     }
 }

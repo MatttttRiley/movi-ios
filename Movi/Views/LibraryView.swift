@@ -1,81 +1,51 @@
 import SwiftUI
 
+/// My List, from app_home.my_list. There is no favorites endpoint on the
+/// live server — the old app called one that 404s, so this tab could
+/// never load. Server favorites are movies only.
 struct LibraryView: View {
     @EnvironmentObject var app: AppState
-    @State private var movies: [HomeItem] = []
-    @State private var shows: [HomeItem] = []
+    @State private var list: [TitleItem] = []
     @State private var error = ""
 
     var body: some View {
-        ZStack {
-            Color.moviBackground.ignoresSafeArea()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if !movies.isEmpty {
-                        section(title: "Movies", items: movies)
-                    }
-                    if !shows.isEmpty {
-                        section(title: "Shows", items: shows)
-                    }
-                    if movies.isEmpty && shows.isEmpty && error.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "bookmark")
-                                .font(.system(size: 44))
-                                .foregroundColor(.white.opacity(0.3))
-                            Text("Your list is empty.")
-                                .foregroundColor(.white.opacity(0.6))
-                            Text("Tap My List on any title to save it here.")
-                                .font(.callout)
-                                .foregroundColor(.white.opacity(0.4))
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 80)
-                    }
-                    if !error.isEmpty {
-                        Text(error).foregroundColor(.red).padding(.horizontal, 16)
-                    }
-                    Spacer(minLength: 24)
+        Group {
+            if !error.isEmpty {
+                ErrorStateView(message: error) { Task { await load() } }
+            } else if list.isEmpty {
+                if #available(iOS 17, *) {
+                    ContentUnavailableView(
+                        "Your List Is Empty",
+                        systemImage: "bookmark",
+                        description: Text("Tap My List on any movie to save it here.")
+                    )
+                } else {
+                    Text("Your list is empty. Tap My List on any movie to save it here.")
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding()
                 }
-                .padding(.top, 8)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 12)], spacing: 16) {
+                        ForEach(list) { item in
+                            PosterCard(item: item, kind: "movie")
+                        }
+                    }
+                    .padding(16)
+                }
+                .refreshable { await load() }
             }
-            .refreshable { await load() }
         }
         .navigationTitle("My List")
         .navigationBarTitleDisplayMode(.large)
         .task { await load() }
     }
 
-    private func section(title: String, items: [HomeItem]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 12)], spacing: 16) {
-                ForEach(items) { item in
-                    PosterCard(item: item)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
     private func load() async {
         do {
-            let r: FavoritesResponse = try await APIClient.shared.get("favorites")
-            // Favorites rows carry no `kind`; stamp for navigation.
-            movies = (r.movies ?? []).map {
-                HomeItem(itemId: $0.itemId, title: $0.title, year: $0.year,
-                         posterUrl: $0.posterUrl, kind: "movie",
-                         positionSeconds: nil, durationSeconds: nil,
-                         showTitle: nil, seasonNo: nil, episodeNo: nil)
-            }
-            shows = (r.shows ?? []).map {
-                HomeItem(itemId: $0.itemId, title: $0.title, year: $0.year,
-                         posterUrl: $0.posterUrl, kind: "show",
-                         positionSeconds: nil, durationSeconds: nil,
-                         showTitle: nil, seasonNo: nil, episodeNo: nil)
-            }
+            let h: HomeResponse = try await APIClient.shared.get("app_home")
+            list = h.myList ?? []
             error = ""
         } catch let e as APIError {
             error = e.localizedDescription

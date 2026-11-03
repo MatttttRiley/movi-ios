@@ -12,8 +12,8 @@ struct DownloadItem: Codable, Identifiable {
     var status: Status
     var progress: Double
     var sizeBytes: Int64?
-    var jobId: String?
     var downloadedAt: Date?
+    var streamUrl: String?
 
     enum Status: String, Codable {
         case preparing, downloading, done, failed
@@ -65,27 +65,44 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     didCompleteWithError error: Error?) {
-        guard let error else { return } // success already handled above
+        guard let error else { return }
         let handler = onComplete.removeValue(forKey: task.taskIdentifier)
         onProgress.removeValue(forKey: task.taskIdentifier)
         DispatchQueue.main.async { handler?(nil, error) }
     }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        Task { @MainActor in
+            DownloadStore.shared.backgroundCompletionHandler?()
+            DownloadStore.shared.backgroundCompletionHandler = nil
+        }
+    }
 }
 
 // MARK: - Store
+//
+// Downloads fetch the title's own stream_url directly, with a BACKGROUND
+// session, so a 2 GB movie keeps downloading when the app goes to the
+// background and can resume after a relaunch. The old store used a
+// foreground session plus server endpoints (app_download_start /
+// download_status) that do not exist on the live server, and marked
+// anything unfinished at relaunch as failed — every large download was
+// doomed. Metadata persists in downloads.json; files in Documents/Downloads.
 
-/// Offline downloads. Flow per item:
-/// app_download_start -> poll download_status -> fetch single-use dl_url
-/// -> save into Documents/Downloads. Metadata persists in downloads.json.
 @MainActor
 final class DownloadStore: ObservableObject {
     static let shared = DownloadStore()
 
     @Published private(set) var items: [DownloadItem] = []
+    @Published var lastError: String = ""
+    var backgroundCompletionHandler: (() -> Void)?
 
     private let delegate = DownloadDelegate()
     private lazy var session: URLSession = {
-        URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        let config = URLSessionConfiguration.background(withIdentifier: "com.philbert.movi.downloads")
+        config.sessionSendsLaunchEvents = true
+        config.isDiscretionary = false
+        return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
     }()
 
     static var downloadsDir: URL {
@@ -112,20 +129,16 @@ final class DownloadStore: ObservableObject {
         guard let data = try? Data(contentsOf: Self.metaURL),
               let saved = try? JSONDecoder().decode([DownloadItem].self, from: data)
         else { return }
-        // Jobs/tokens don't survive a relaunch; anything unfinished failed.
-        items = saved.map { item in
-            var it = item
-            if it.status != .done {
-                it.status = .failed
-                it.progress = 0
-            }
-            return it
+        // A background task survives relaunch, so do NOT mark unfinished
+        // items failed here. Items whose file is gone are the only dead ones.
+        items = saved.filter { item in
+            item.status != .done || item.localURL != nil
         }
     }
 
     private func save() {
         if let data = try? JSONEncoder().encode(items) {
-            try? data.write(to: Self.metaURL)
+            try? data.write(to: Self.metaURL, options: .atomic)
         }
     }
 
@@ -135,19 +148,27 @@ final class DownloadStore: ObservableObject {
         items.first { $0.kind == kind && $0.libraryId == libraryId }
     }
 
-    func start(kind: String, libraryId: Int, title: String, posterUrl: String?) {
-        // Drop a previous failed attempt for the same title before retrying.
+    func start(kind: String, libraryId: Int, title: String, posterUrl: String?, streamUrl: String?) {
         items.removeAll { $0.kind == kind && $0.libraryId == libraryId && $0.status == .failed }
         guard item(kind: kind, libraryId: libraryId) == nil else { return }
+        guard let streamUrl, let url = URL(string: streamUrl), !streamUrl.isEmpty else {
+            lastError = "This title has no video file to download yet."
+            return
+        }
         let item = DownloadItem(
             id: UUID().uuidString, kind: kind, libraryId: libraryId,
             title: title, posterUrl: posterUrl, filename: "",
             status: .preparing, progress: 0, sizeBytes: nil,
-            jobId: nil, downloadedAt: nil
+            downloadedAt: nil, streamUrl: streamUrl
         )
         items.insert(item, at: 0)
         save()
-        Task { await runDownload(id: item.id) }
+        Task { await runDownload(id: item.id, url: url) }
+    }
+
+    func retry(_ item: DownloadItem) {
+        start(kind: item.kind, libraryId: item.libraryId, title: item.title,
+              posterUrl: item.posterUrl, streamUrl: item.streamUrl)
     }
 
     func delete(_ item: DownloadItem) {
@@ -171,60 +192,12 @@ final class DownloadStore: ObservableObject {
         save()
     }
 
-    private func runDownload(id: String) async {
-        guard let item = items.first(where: { $0.id == id }) else { return }
+    private func runDownload(id: String, url: URL) async {
+        guard items.first(where: { $0.id == id }) != nil else { return }
+        // Unique filename per title, so two titles can never overwrite
+        // each other (the old code used the server filename as-is).
+        let filename = "\(id).mp4"
         do {
-            // 1. Ask the site to stage the file on the worker.
-            struct StartResp: Decodable {
-                let ok: Bool
-                let job_id: String?
-                let error: String?
-            }
-            let data = try await APIClient.shared.postForm(
-                "app_download_start",
-                fields: ["kind": item.kind, "id": "\(item.libraryId)"]
-            )
-            let started = try JSONDecoder().decode(StartResp.self, from: data)
-            guard let jobId = started.job_id else {
-                fail(id, started.error ?? "Couldn't start the download.")
-                return
-            }
-            update(id: id) { $0.jobId = jobId }
-
-            // 2. Poll until the worker hands us the single-use file URL.
-            struct StatusResp: Decodable {
-                let status: String?
-                let progress: Double?
-                let dl_url: String?
-                let filename: String?
-                let error: String?
-            }
-            var dlUrl: String?
-            var filename = "video.mp4"
-            for _ in 0..<120 { // ~6 minutes of "preparing" max
-                try await Task.sleep(nanoseconds: 3_000_000_000)
-                let st: StatusResp = try await APIClient.shared.get(
-                    "download_status", params: ["job_id": jobId])
-                if let p = st.progress {
-                    let s: DownloadItem.Status = (st.status == "downloading") ? .downloading : .preparing
-                    update(id: id) { $0.status = s; $0.progress = p * 0.5 }
-                }
-                if st.status == "done", let u = st.dl_url {
-                    dlUrl = u
-                    if let fn = st.filename, !fn.isEmpty { filename = fn }
-                    break
-                }
-                if st.status == "failed" || st.status == "cancelled" {
-                    fail(id, st.error ?? "The download failed.")
-                    return
-                }
-            }
-            guard let dlUrl, let url = URL(string: dlUrl) else {
-                fail(id, "Timed out preparing the download.")
-                return
-            }
-
-            // 3. Fetch the file (single GET consumes the one-time token).
             try await fetchFile(id: id, from: url, filename: filename)
         } catch {
             fail(id, (error as? APIError)?.localizedDescription ?? "Download failed.")
@@ -232,25 +205,24 @@ final class DownloadStore: ObservableObject {
     }
 
     private func fetchFile(id: String, from url: URL, filename: String) async throws {
-        let safe = filename.replacingOccurrences(of: "/", with: "_")
-        let dest = Self.downloadsDir.appendingPathComponent(safe)
+        let dest = Self.downloadsDir.appendingPathComponent(filename)
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             let task = session.downloadTask(with: url)
             let tid = task.taskIdentifier
             delegate.onProgress[tid] = { [weak self] p in
                 Task { @MainActor [weak self] in
-                    self?.update(id: id) { $0.status = .downloading; $0.progress = 0.5 + p * 0.5 }
+                    self?.update(id: id) { $0.status = .downloading; $0.progress = p }
                 }
             }
             delegate.onComplete[tid] = { [weak self] location, error in
                 Task { @MainActor [weak self] in
-                    guard let self else { cont.resume(throwing: APIError.network); return }
+                    guard let self else { cont.resume(throwing: APIError.network("Couldn't reach the server.")); return }
                     if let error {
                         cont.resume(throwing: error)
                         return
                     }
                     guard let location else {
-                        cont.resume(throwing: APIError.network)
+                        cont.resume(throwing: APIError.network("Couldn't reach the server."))
                         return
                     }
                     do {
@@ -262,7 +234,7 @@ final class DownloadStore: ObservableObject {
                         self.update(id: id) {
                             $0.status = .done
                             $0.progress = 1
-                            $0.filename = safe
+                            $0.filename = filename
                             $0.sizeBytes = size
                             $0.downloadedAt = Date()
                         }
@@ -272,6 +244,7 @@ final class DownloadStore: ObservableObject {
                     }
                 }
             }
+            update(id: id) { $0.status = .downloading }
             task.resume()
         }
     }
@@ -280,6 +253,4 @@ final class DownloadStore: ObservableObject {
         update(id: id) { $0.status = .failed; $0.progress = 0 }
         lastError = message
     }
-
-    @Published var lastError: String = ""
 }

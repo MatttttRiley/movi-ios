@@ -37,4 +37,4 @@ zip -r -y Movi-unsigned.ipa Payload
 
 Native SwiftUI iOS app (iOS 16+, iPhone). No web views — native UI plus
 Apple's AVPlayer. It talks to the Movi server's JSON API at
-https://movi.byethost6.com for library data, and supports offline downloads.
+https://movi.webs.vc for library data, and supports offline downloads.
