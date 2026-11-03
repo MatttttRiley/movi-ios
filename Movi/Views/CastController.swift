@@ -108,7 +108,7 @@ final class CastController: NSObject, ObservableObject {
 
 extension CastController: GCKSessionManagerListener {
     func sessionManager(_ manager: GCKSessionManager, didStart session: GCKSession) {
-        deviceName = session.device?.friendlyName
+        deviceName = session.device.friendlyName
         isCasting = true
         loadPendingMedia()
     }

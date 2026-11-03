@@ -105,7 +105,7 @@ final class DownloadStore: ObservableObject {
         return URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
     }()
 
-    static var downloadsDir: URL {
+    nonisolated static var downloadsDir: URL {
         let dir = FileManager.default
             .urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Downloads", isDirectory: true)

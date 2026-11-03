@@ -89,7 +89,7 @@ struct SearchView: View {
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
-            error = "Search failed."
+            self.error = "Search failed."
         }
         searching = false
     }

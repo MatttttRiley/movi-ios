@@ -111,7 +111,7 @@ struct DownloadButton: View {
 
     var body: some View {
         let existing = store.item(kind: kind, libraryId: libraryId)
-        Button {
+        let button = Button {
             if existing?.status == .failed {
                 store.retry(existing!)
             } else if existing == nil {
@@ -127,7 +127,13 @@ struct DownloadButton: View {
                 Label(label(for: existing), systemImage: icon(for: existing))
             }
         }
-        .buttonStyle(compact ? .plain : .bordered)
+        Group {
+            if compact {
+                button.buttonStyle(.plain)
+            } else {
+                button.buttonStyle(.bordered)
+            }
+        }
         .disabled((existing != nil && existing?.status != .failed) || streamUrl == nil || streamUrl?.isEmpty == true)
         .accessibilityLabel(label(for: existing) + " " + title)
     }

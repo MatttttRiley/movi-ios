@@ -120,7 +120,7 @@ struct PlayerLoader: View {
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
-            error = "Couldn't load the video."
+            self.error = "Couldn't load the video."
         }
     }
 
