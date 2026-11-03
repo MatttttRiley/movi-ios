@@ -87,7 +87,7 @@ struct MovieDetailView: View {
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
-            error = "Couldn't load this title."
+            self.error = "Couldn't load this title."
         }
     }
 
@@ -177,7 +177,7 @@ struct ShowDetailView: View {
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
-            error = "Couldn't load this show."
+            self.error = "Couldn't load this show."
         }
     }
 }

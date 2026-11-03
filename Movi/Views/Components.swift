@@ -132,7 +132,13 @@ struct HomeRowView: View {
 struct BackdropBanner: View {
     let imageUrl: String?
     let fallbackPosterUrl: String?
-    let height: CGFloat = 300
+    let height: CGFloat
+
+    init(imageUrl: String?, fallbackPosterUrl: String?, height: CGFloat = 300) {
+        self.imageUrl = imageUrl
+        self.fallbackPosterUrl = fallbackPosterUrl
+        self.height = height
+    }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {

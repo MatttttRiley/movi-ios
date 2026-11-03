@@ -50,7 +50,7 @@ struct LibraryView: View {
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
-            error = "Couldn't load your list."
+            self.error = "Couldn't load your list."
         }
     }
 }

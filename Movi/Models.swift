@@ -27,11 +27,19 @@ struct APIUser: Codable {
         id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
         username = try c.decodeIfPresent(String.self, forKey: .username) ?? ""
         email = try c.decodeIfPresent(String.self, forKey: .email) ?? ""
-        if let b = try? c.decodeIfPresent(Bool.self, forKey: .is_admin), let b {
+        if let b = try? c.decodeIfPresent(Bool.self, forKey: .is_admin) {
             isAdmin = b
         } else {
             isAdmin = (try? c.decodeIfPresent(Int.self, forKey: .is_admin)) ?? 0 == 1
         }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(username, forKey: .username)
+        try c.encode(email, forKey: .email)
+        try c.encode(isAdmin, forKey: .is_admin)
     }
 }
 
@@ -96,7 +104,7 @@ struct TitleItem: Codable, Identifiable, Hashable {
         if let g = try? c.decodeIfPresent(String.self, forKey: .genres) {
             genres = g
         } else if let arr = try? c.decodeIfPresent([String].self, forKey: .genres) {
-            genres = arr?.joined(separator: ", ")
+            genres = arr.joined(separator: ", ")
         } else {
             genres = nil
         }
@@ -105,6 +113,22 @@ struct TitleItem: Codable, Identifiable, Hashable {
         streamUrl = try c.decodeIfPresent(String.self, forKey: .stream_url)
         positionSeconds = try c.decodeIfPresent(Int.self, forKey: .position)
         progress = try c.decodeIfPresent(Double.self, forKey: .progress)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(year, forKey: .year)
+        try c.encodeIfPresent(overview, forKey: .overview)
+        try c.encodeIfPresent(poster, forKey: .poster)
+        try c.encodeIfPresent(backdrop, forKey: .backdrop)
+        try c.encodeIfPresent(genres, forKey: .genres)
+        try c.encodeIfPresent(runtimeMinutes, forKey: .runtime)
+        try c.encodeIfPresent(durationSeconds, forKey: .duration)
+        try c.encodeIfPresent(streamUrl, forKey: .stream_url)
+        try c.encodeIfPresent(positionSeconds, forKey: .position)
+        try c.encodeIfPresent(progress, forKey: .progress)
     }
 }
 
@@ -154,6 +178,17 @@ struct EpisodeItem: Codable, Identifiable, Hashable {
         durationSeconds = try c.decodeIfPresent(Int.self, forKey: .duration)
         streamUrl = try c.decodeIfPresent(String.self, forKey: .streamUrl)
     }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encode(episodeNumber, forKey: .episodeNumber)
+        try c.encodeIfPresent(overview, forKey: .overview)
+        try c.encodeIfPresent(still, forKey: .still)
+        try c.encodeIfPresent(durationSeconds, forKey: .duration)
+        try c.encodeIfPresent(streamUrl, forKey: .streamUrl)
+    }
 }
 
 struct SeasonItem: Codable, Identifiable, Hashable {
@@ -171,6 +206,13 @@ struct SeasonItem: Codable, Identifiable, Hashable {
         id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 0
         seasonNumber = try c.decodeIfPresent(Int.self, forKey: .seasonNumber) ?? 0
         episodes = try c.decodeIfPresent([EpisodeItem].self, forKey: .episodes)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(seasonNumber, forKey: .seasonNumber)
+        try c.encodeIfPresent(episodes, forKey: .episodes)
     }
 }
 
@@ -194,6 +236,16 @@ struct ShowDetailItem: Codable {
         poster = try c.decodeIfPresent(String.self, forKey: .poster)
         backdrop = try c.decodeIfPresent(String.self, forKey: .backdrop)
         seasons = try c.decodeIfPresent([SeasonItem].self, forKey: .seasons)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encodeIfPresent(overview, forKey: .overview)
+        try c.encodeIfPresent(poster, forKey: .poster)
+        try c.encodeIfPresent(backdrop, forKey: .backdrop)
+        try c.encodeIfPresent(seasons, forKey: .seasons)
     }
 }
 

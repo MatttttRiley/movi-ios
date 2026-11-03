@@ -73,7 +73,7 @@ struct PlayerLoader: View {
             }
         }
         .task(id: reloadToken) { await load() }
-        .onChange(of: cast.isCasting) { _, nowCasting in
+        .onChange(of: cast.isCasting) { nowCasting in
             // Session ended: keep the receiver's position so the final
             // report on disappear resumes from it even if local playback
             // never restarts before the screen closes.

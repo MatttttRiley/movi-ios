@@ -17,7 +17,7 @@ struct LoginView: View {
                 Spacer(minLength: 40)
                 Text("Movi")
                     .font(.largeTitle.bold())
-                    .foregroundStyle(.moviAccent)
+                    .foregroundStyle(Color.moviAccent)
                     .accessibilityAddTraits(.isHeader)
                 Text("Sign in to your account.")
                     .font(.title3)

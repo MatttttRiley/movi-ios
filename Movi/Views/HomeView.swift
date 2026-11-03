@@ -87,7 +87,7 @@ struct HomeView: View {
                 error = e.localizedDescription
             }
         } catch {
-            error = "Couldn't load home."
+            self.error = "Couldn't load home."
         }
     }
 }

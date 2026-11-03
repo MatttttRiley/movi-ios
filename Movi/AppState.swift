@@ -71,7 +71,7 @@ final class AppState: ObservableObject {
         } catch let e as APIError {
             error = e.localizedDescription
         } catch {
-            error = "Couldn't reach the server."
+            self.error = "Couldn't reach the server."
         }
     }
 
@@ -104,7 +104,7 @@ final class AppState: ObservableObject {
         do {
             try await selectProfile(p)
         } catch {
-            error = "Couldn't select that profile."
+            self.error = "Couldn't select that profile."
         }
     }
 
