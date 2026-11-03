@@ -255,6 +255,8 @@
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = Movi/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = iphoneos;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -279,6 +281,8 @@
 				DEVELOPMENT_TEAM = "";
 				INFOPLIST_FILE = Movi/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = iphoneos;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
