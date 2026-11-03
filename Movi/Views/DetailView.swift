@@ -47,7 +47,7 @@ struct MovieDetailView: View {
                             if let pos = m.positionSeconds, pos > 0 {
                                 Text("Resume from \(formattedTime(pos))")
                                     .font(.callout)
-                                    .foregroundStyle(.moviAccent)
+                                    .foregroundStyle(Color.moviAccent)
                             }
                         }
                         .padding(.horizontal, 20)
