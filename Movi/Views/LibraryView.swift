@@ -33,6 +33,7 @@ struct LibraryView: View {
                         }
                     }
                     .padding(16)
+                    .padding(.bottom, 96)
                 }
                 .refreshable { await load() }
             }

@@ -11,6 +11,7 @@ struct HomeView: View {
     @State private var home: HomeResponse?
     @State private var error = ""
     @State private var playRequest: PlayRequest?
+    @State private var showAccount = false
 
     var body: some View {
         Group {
@@ -37,6 +38,10 @@ struct HomeView: View {
                         Spacer(minLength: 24)
                     }
                     .padding(.top, 8)
+                    // Last rows must clear the floating tab bar: the tab
+                    // bar overlaps scroll content on current iOS, so a
+                    // plain spacer is not enough.
+                    .padding(.bottom, 96)
                 }
                 .refreshable { await load() }
             } else if !error.isEmpty {
@@ -51,12 +56,15 @@ struct HomeView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
-                    Task { await app.logout() }
+                    showAccount = true
                 } label: {
-                    Label("Sign Out", systemImage: "person.circle")
+                    Label("Account", systemImage: "person.circle")
                 }
-                .accessibilityLabel("Sign out")
+                .accessibilityLabel("Account")
             }
+        }
+        .navigationDestination(isPresented: $showAccount) {
+            AccountView()
         }
         .task { await load() }
         .fullScreenCover(item: $playRequest) { req in

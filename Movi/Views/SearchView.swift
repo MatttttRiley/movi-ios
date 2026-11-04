@@ -50,6 +50,7 @@ struct SearchView: View {
                         Spacer(minLength: 24)
                     }
                     .padding(.top, 8)
+                    .padding(.bottom, 96)
                 }
             }
         }
