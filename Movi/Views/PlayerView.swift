@@ -204,8 +204,12 @@ struct PlayerView: UIViewControllerRepresentable {
         let player = AVPlayer(url: url)
         let vc = AVPlayerViewController()
         vc.player = player
-        vc.entersFullScreenWhenPlaybackBegins = true
-        vc.exitsFullScreenWhenPlaybackEnds = true
+        // PlayerLoader is already presented fullscreen (fullScreenCover),
+        // so the player must NOT try to enter fullscreen a second time:
+        // that double-fullscreen transition leaves the video layer black
+        // while controls and timeline keep running.
+        vc.entersFullScreenWhenPlaybackBegins = false
+        vc.exitsFullScreenWhenPlaybackEnds = false
         vc.allowsPictureInPicturePlayback = true
 
         // Cast button: the SDK's own button, placed over the video via
